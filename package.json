@@ -1,0 +1,47 @@
+{
+  "name": "bidcenter-data-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "采招网每日增量采集服务",
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "setup": "node scripts/setup.mjs && prisma generate && npm run db:migrate",
+    "db:migrate": "node scripts/prepare-db.mjs && prisma migrate deploy",
+    "browser:install": "playwright install chromium",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:http": "node scripts/smoke-http.mjs",
+    "backup": "node scripts/backup.mjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "12.0.1",
+    "@nestjs/core": "12.0.1",
+    "@nestjs/platform-express": "12.0.1",
+    "@nestjs/schedule": "12.0.1",
+    "@prisma/adapter-better-sqlite3": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "cheerio": "^1.1.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "dotenv": "^17.2.3",
+    "playwright": "^1.58.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.0",
+    "prisma": "7.10.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "multer": "2.3.0",
+    "deepmerge-ts": "8.0.2",
+    "mysql2": "3.24.4"
+  }
+}

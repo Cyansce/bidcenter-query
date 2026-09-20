@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client"
+  output = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+datasource db {
+  provider = "sqlite"
+}
+model Project {
+  id String @id @default(cuid())
+  sourceId String @unique
+  sourceUrl String
+  title String
+  region String
+  noticeType Int
+  publishedAt DateTime
+  budgetYuan String?
+  budgetRaw String?
+  procurementMethod String?
+  fileDeadline DateTime?
+  bidDeadline DateTime?
+  deadlineEvidence String @default("{}")
+  listedDeadlineRaw String?
+  expectedPurchaseRaw String?
+  bodyText String @default("")
+  bodyHtml String @default("")
+  contactsJson String @default("[]")
+  buyer String?
+  agency String?
+  projectNumber String?
+  relevance String @default("REVIEW")
+  followUpStatus String @default("UNKNOWN")
+  accessLevel String @default("UNKNOWN")
+  detailStatus String @default("PENDING")
+  detailError String?
+  detailFetchedAt DateTime?
+  contentHash String @default("")
+  duplicateGroup String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastSeenAt DateTime @default(now())
+  matches QueryMatch[]
+  revisions ProjectRevision[]
+  @@index([publishedAt, id])
+  @@index([region, noticeType])
+  @@index([relevance, followUpStatus])
+  @@index([duplicateGroup])
+}
+model QueryMatch {
+  projectId String
+  query String
+  lastSeenAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@id([projectId, query])
+}
+model ProjectRevision {
+  id String @id @default(cuid())
+  projectId String
+  hash String
+  snapshotJson String
+  capturedAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, hash])
+}
+model CollectionRun {
+  id String @id @default(cuid())
+  scheduleKey String? @unique
+  trigger String
+  status String @default("QUEUED")
+  queriesJson String
+  fromDate DateTime
+  toDate DateTime
+  queryIndex Int @default(0)
+  page Int @default(1)
+  seen Int @default(0)
+  saved Int @default(0)
+  restricted Int @default(0)
+  failedDetails Int @default(0)
+  warningsJson String @default("[]")
+  lastError String?
+  nextAttemptAt DateTime?
+  attempts Int @default(0)
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, createdAt])
+}
+model WorkerLease {
+  name String @id
+  owner String
+  expiresAt DateTime
+}
+model Notification {
+  id String @id @default(cuid())
+  kind String
+  message String
+  createdAt DateTime @default(now())
+  acknowledgedAt DateTime?
+  @@index([createdAt])
+}

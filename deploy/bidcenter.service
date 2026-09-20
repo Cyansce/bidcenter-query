@@ -1,0 +1,22 @@
+[Unit]
+Description=Bidcenter incremental collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Create this service account and adjust paths before installation.
+User=bidcenter
+WorkingDirectory=/opt/bidcenter
+EnvironmentFile=/opt/bidcenter/.env
+ExecStartPre=/usr/bin/npm run db:migrate
+ExecStart=/usr/bin/node dist/main.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
