@@ -13,7 +13,7 @@ export class AppController {
   constructor(private readonly auth: AuthService, private readonly collector: CollectorService, private readonly db: DbService, private readonly projects: ProjectsService) {}
   @Get('status') async status() {
     return { auth: await this.auth.status(), schedule: { cron: '0 0 8 * * *', timeZone: 'Asia/Shanghai', enabled: config.scheduleEnabled },
-      search: { mode: config.searchMode, keywords: config.keywords, combinedQuery: config.combinedQuery, lookbackDays: config.lookbackDays, types: [1, 2], region: '全国', tag: config.searchTag },
+      search: { mode: config.searchMode, keywords: config.keywords, combinedQuery: config.combinedQuery, lookbackDays: config.lookbackDays, types: [1, 2], region: '全国', tag: config.searchTag, maxPagesPerRun: config.maxPages },
       count: await this.db.project.count() };
   }
   @Get('auth/status') authStatus() { return this.auth.status(); }

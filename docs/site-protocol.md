@@ -63,3 +63,14 @@
 真实登录后确认：浏览器存储的某些 Cookie 含 Node 请求头不接受的字符；APIRequestContext 默认携带这些 Cookie 时请求在本地失败。原站跨域请求通过表单 Token 认证，未启用跨域 Cookie，因此采集器显式发送空 Cookie 头，并保留 Token 校验。修正后 AuthorityHandler 返回 HTTP 200、ret=true。
 
 查询语义实测：四词空格连接在全文近一周条件下返回零；用户原始顿号表达式返回 realInfoCount=12940、showInfoCount=1000（免费账号实际最多前10页）。因此默认使用用户原始顿号表达式，不宣称空格是逻辑 OR。接口自动扩展 time=7 的日期范围，本地再次按七个自然日过滤。
+
+
+## 2026-09-20 会员复核
+
+已用指定标准会员会话实际验证：搜索接口 `isFufei=true`，当时组合搜索 `realInfoCount=14114`、`showInfoCount=2000`。这些是当时网站返回的数量，不表示本地已采完；本地每任务合计最多 15 页。
+
+详情 `isAllow=true` 的真实记录包含完整采购正文。除既有字段外，还观察到 `yezhuLxr`、`yezhuTel`、`tagslist`、`fenxikeywordlist`、`jinzhanlist`、`xiazailist`、`fujianurl`、`pdf_url`、`pingbMethod`、`zijinFrom`、`zhongbiaojine` 及合同字段。字段可能为空；不从空字段推断值。采购人、代理机构接口字段为空时，从正文明确标注的单位名称补充。
+
+正文附件可能使用 `www.bidcenter.com.cn/link?target=...` 跳转地址，链接文字是 `采购需求.docx`。提取时同时检查链接文字和地址，保留完整跳转 URL（包括所需查询参数）。不执行 `javascript:` 链接。
+
+登录有效不代表没有访问验证：本次先遇到接口 `HUMAN_REQUIRED` 和搜索页滑块；用户在浏览器人工验证后同一加密会话通过 Authority 检查并取得完整详情。验证码流程仍由用户处理。

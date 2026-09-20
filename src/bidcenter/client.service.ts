@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SessionService } from '../auth/session.service';
 import { config } from '../config';
-import { decodePayload, unwrapPayload, parseSearch, searchForm, interfaceHeaders, SiteError } from './protocol';
+import { decodePayload, unwrapPayload, parseSearch, searchForm, interfaceHeaders, SiteError, siteFalse } from './protocol';
 
 @Injectable()
 export class BidcenterClient {
@@ -65,7 +65,7 @@ export class BidcenterClient {
   }
   async verifySession() {
     const result = await this.post('/public/AuthorityHandler.ashx', {}, false, false);
-    if (result.isLogin === false || result.islogin === false) throw new SiteError('LOGIN_REQUIRED', '采招网返回未登录状态');
+    if (siteFalse(result.isLogin) || siteFalse(result.islogin)) throw new SiteError('LOGIN_REQUIRED', '采招网返回未登录状态');
     await this.sessions.persist();
     return true;
   }

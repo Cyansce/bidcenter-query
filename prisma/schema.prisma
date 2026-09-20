@@ -25,6 +25,16 @@ model Project {
   bodyText String @default("")
   bodyHtml String @default("")
   contactsJson String @default("[]")
+  attachmentsJson String @default("[]")
+  timelineJson String @default("[]")
+  tagsJson String @default("[]")
+  listingDataJson String @default("{}")
+  detailDataJson String @default("{}")
+  originalUrl String?
+  pdfUrl String?
+  sourceWebsite String?
+  winningBidder String?
+  detailParserVersion Int @default(0)
   buyer String?
   agency String?
   projectNumber String?
@@ -72,6 +82,8 @@ model CollectionRun {
   toDate DateTime
   queryIndex Int @default(0)
   page Int @default(1)
+  pagesCollected Int @default(0)
+  maxPages Int @default(15)
   seen Int @default(0)
   saved Int @default(0)
   restricted Int @default(0)

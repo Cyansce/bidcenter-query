@@ -4,6 +4,8 @@ export type FailureKind = 'LOGIN_REQUIRED' | 'HUMAN_REQUIRED' | 'PERMISSION_REQU
 export class SiteError extends Error {
   constructor(public readonly kind: FailureKind, message: string) { super(message); }
 }
+export const siteTrue = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
+export const siteFalse = (value: unknown) => value === false || value === 0 || value === '0' || value === 'false';
 // Public frontend transport encoding, observed in searchv17.js and app.707527bf.js.
 // This only decodes the response delivered to the authenticated account.
 export function decodePayload(text: string): Record<string, any> {
@@ -24,7 +26,7 @@ export function unwrapPayload(envelope: Record<string, any>): Record<string, any
     throw new SiteError('LOGIN_REQUIRED', '采招网登录态已过期，请重新登录');
   }
   if ([999, 998].includes(Number(envelope.retbs))) throw new SiteError('HUMAN_REQUIRED', '采招网要求人工验证，请在登录浏览器中处理');
-  if (!envelope.ret || envelope.ret === 'false') {
+  if (!siteTrue(envelope.ret)) {
     const msg = String(envelope.msg || '');
     if (/登录|登陆/.test(msg)) throw new SiteError('LOGIN_REQUIRED', '采招网要求重新登录');
     if (/验证|频繁|风险|访问异常/.test(msg)) throw new SiteError('HUMAN_REQUIRED', '采招网要求人工验证');
@@ -44,12 +46,13 @@ export function searchForm(query: string, page: number, token: string, guid: str
   };
 }
 export interface SearchItem {
+  [field: string]: unknown;
   news_id: string | number; news_title_show: string; news_type: number;
   news_star_time_show: string; news_diqustr?: string; news_url?: string;
   news_zbje_show?: string; news_cgfs?: string; news_end_time_show?: string;
 }
 export function parseSearch(result: Record<string, any>) {
-  if (result.isLogin === false || result.islogin === false) throw new SiteError('LOGIN_REQUIRED', '查询接口要求登录');
+  if (siteFalse(result.isLogin) || siteFalse(result.islogin)) throw new SiteError('LOGIN_REQUIRED', '查询接口要求登录');
   const list = result.listData;
   const total = Number(result.realInfoCount ?? result.showInfoCount);
   if (!Number.isFinite(total) || total < 0) throw new SiteError('PROTOCOL_CHANGED', '搜索结果缺少可靠的总数');
@@ -60,7 +63,7 @@ export function parseSearch(result: Record<string, any>) {
   if (!Array.isArray(list) || list.some(x => !x.news_id || !x.news_title_show || !x.news_star_time_show || !x.news_type)) {
     throw new SiteError('PROTOCOL_CHANGED', '搜索列表字段变化');
   }
-  const paid = result.isFufei === true || result.isFufei === 1;
+  const paid = siteTrue(result.isFufei);
   const showCount = Number(result.showInfoCount ?? total);
   return { items: list as SearchItem[], total, accessibleTotal: Math.min(total, Number.isFinite(showCount) ? showCount : total), paid };
 }

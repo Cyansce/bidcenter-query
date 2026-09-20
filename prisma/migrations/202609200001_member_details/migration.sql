@@ -1,0 +1,13 @@
+ALTER TABLE "Project" ADD COLUMN "attachmentsJson" TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE "Project" ADD COLUMN "timelineJson" TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE "Project" ADD COLUMN "tagsJson" TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE "Project" ADD COLUMN "listingDataJson" TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE "Project" ADD COLUMN "detailDataJson" TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE "Project" ADD COLUMN "originalUrl" TEXT;
+ALTER TABLE "Project" ADD COLUMN "pdfUrl" TEXT;
+ALTER TABLE "Project" ADD COLUMN "sourceWebsite" TEXT;
+ALTER TABLE "Project" ADD COLUMN "winningBidder" TEXT;
+ALTER TABLE "Project" ADD COLUMN "detailParserVersion" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "CollectionRun" ADD COLUMN "pagesCollected" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "CollectionRun" ADD COLUMN "maxPages" INTEGER NOT NULL DEFAULT 15;
+UPDATE "CollectionRun" SET "pagesCollected" = MAX("page" - 1, 0);

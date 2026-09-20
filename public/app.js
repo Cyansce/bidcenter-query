@@ -21,12 +21,12 @@ async function refresh() {
     const [status, runs, notifications] = await Promise.all([api('status'), api('runs'), api('notifications')]);
     $('connection').textContent = '已连接';
     $('managedControls').hidden = status.auth.browserMode === 'chrome-manual';
-    $('auth').textContent = `${status.auth.state} · ${status.auth.phone} · ${status.auth.message}`;
-    $('search').textContent = `当前：${status.search.mode === 'combined' ? '组合查询 ' + status.search.combinedQuery : '分别查询 ' + status.search.keywords.join('、')}；已保存 ${status.count} 条`;
+    $('auth').textContent = `${status.auth.state} · ${status.auth.account || status.auth.phone} · ${status.auth.message}`;
+    $('search').textContent = `当前：${status.search.mode === 'combined' ? '组合查询 ' + status.search.combinedQuery : '分别查询 ' + status.search.keywords.join('、')}；每任务最多 ${status.search.maxPagesPerRun} 页；已保存 ${status.count} 条`;
     $('runs').replaceChildren();
     for (const run of runs.slice(0, 12)) {
       const row = document.createElement('div');
-      row.textContent = `${date(run.createdAt)}  ${run.status}  查询 ${run.queryIndex + 1} / 第 ${run.page} 页  保存详情 ${run.saved} / 受限 ${run.restricted}\n${run.lastError || ''} ${JSON.parse(run.warningsJson).join('；')}\n`;
+      row.textContent = `${date(run.createdAt)}  ${run.status}  已完成 ${run.pagesCollected} / ${run.maxPages} 页；查询 ${Math.min(run.queryIndex + 1, JSON.parse(run.queriesJson).length)} / 断点第 ${run.page} 页  保存详情 ${run.saved} / 受限 ${run.restricted}\n${run.lastError || ''} ${JSON.parse(run.warningsJson).join('；')}\n`;
       if (['FAILED', 'RETRY_WAIT'].includes(run.status)) { const button = document.createElement('button'); button.textContent = '从断点恢复'; button.onclick = () => action(() => api(`runs/${run.id}/resume`, {})); row.append(button); }
       $('runs').append(row);
     }
@@ -44,7 +44,7 @@ async function loadProjects() {
   for (const item of result.items) {
     const tr = document.createElement('tr'); const title = document.createElement('td');
     const button = document.createElement('button'); button.textContent = item.title;
-    button.onclick = () => action(async () => { const detail = await api(`projects/${item.id}`); $('detailText').textContent = `${detail.title}\n${detail.sourceUrl}\n\n报名/文件截止：${date(detail.fileDeadline)}\n响应/投标截止：${date(detail.bidDeadline)}\n预算：${detail.budgetRaw || '未披露'}\n采购方式：${detail.procurementMethod || '未披露'}\n联系人：${JSON.stringify(detail.contacts, null, 2)}\n\n${detail.bodyText || '详情尚未获取'}\n\n日期依据：${JSON.stringify(detail.deadlineEvidence, null, 2)}`; $('detail').showModal(); });
+    button.onclick = () => action(async () => { const detail = await api(`projects/${item.id}`); $('detailText').textContent = `${detail.title}\n${detail.sourceUrl}\n\n报名/文件截止：${date(detail.fileDeadline)}\n响应/投标截止：${date(detail.bidDeadline)}\n预算：${detail.budgetRaw || '未披露'}\n采购方式：${detail.procurementMethod || '未披露'}\n采购人：${detail.buyer || '未披露'}\n代理机构：${detail.agency || '未披露'}\n项目编号：${detail.projectNumber || '未披露'}\n来源：${detail.sourceWebsite || '未披露'}\n原始链接：${detail.originalUrl || detail.sourceUrl}\nPDF：${detail.pdfUrl || '未提供'}\n联系人：${JSON.stringify(detail.contacts, null, 2)}\n附件：${JSON.stringify(detail.attachments, null, 2)}\n项目进展：${JSON.stringify(detail.timeline, null, 2)}\n标签：${JSON.stringify(detail.tags, null, 2)}\n\n${detail.bodyText || '详情尚未获取'}\n\n日期依据：${JSON.stringify(detail.deadlineEvidence, null, 2)}`; $('detail').showModal(); });
     title.append(button); tr.append(title);
     for (const value of [item.region, date(item.publishedAt), item.budgetYuan || item.budgetRaw || '未披露', date(item.fileDeadline), date(item.bidDeadline), `${item.accessLevel} / ${item.detailStatus}`]) { const td = document.createElement('td'); td.textContent = value; tr.append(td); }
     $('projects').append(tr);

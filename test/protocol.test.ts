@@ -40,3 +40,9 @@ test('跨域接口不携带浏览器 Cookie，避免 Unicode Cookie 使请求失
   assert.equal(interfaceHeaders(false).Cookie, '');
   assert.equal(interfaceHeaders(true).Origin, 'https://search.bidcenter.com.cn');
 });
+test('会员与登录标识兼容字符串，字符串 false 不能被当作成功', () => {
+  assert.equal(parseSearch({ listData: [], realInfoCount: 0, isFufei: 'true' }).paid, true);
+  assert.equal(parseSearch({ listData: [], realInfoCount: 0, isFufei: '1' }).paid, true);
+  assert.throws(() => parseSearch({ listData: [], realInfoCount: 0, isLogin: 'false' }), (e: any) => e.kind === 'LOGIN_REQUIRED');
+  assert.throws(() => unwrapPayload({ ret: '0', other2: {} }), SiteError);
+});

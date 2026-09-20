@@ -25,7 +25,8 @@ export class AuthService implements OnApplicationShutdown {
       this.state = saved ? 'SESSION_SAVED' : 'LOGIN_REQUIRED';
       if (saved) this.message = '已载入加密会话，采集前会验证有效性';
     }
-    return { state: this.state, message: this.message, method: this.method, phone: config.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2'), browserMode: config.loginBrowserMode, browserOpen: this.manual?.isOpen || (!!this.page && !this.page.isClosed()) };
+    return { state: this.state, message: this.message, method: this.method, phone: config.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2'),
+      ...await this.sessions.identity(), browserMode: config.loginBrowserMode, browserOpen: this.manual?.isOpen || (!!this.page && !this.page.isClosed()) };
   }
   isBlocked() { return this.blocked; }
   async requireAction(error: SiteError) {

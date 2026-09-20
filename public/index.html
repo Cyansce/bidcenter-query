@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>采招网采集管理</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body><main><h1>采招网采集管理</h1><p>每日北京时间 08:00 · 全国 · 近一周 · 招标公告 / 招标预告</p>
+<body><main><h1>采招网采集管理</h1><p>每日北京时间 08:00 · 全国 · 近一周 · 招标公告 / 招标预告 · 每任务最多 15 页</p>
 <section><label>管理密钥 API_KEY <input id="key" type="password" autocomplete="off" placeholder="从本机 .env 复制"></label><button id="connect">连接</button><span id="connection"></span></section>
 <p id="message" role="status"></p>
 <section><h2>登录与验证</h2><p id="auth">尚未连接</p><div class="actions"><button id="smsStart">打开短信登录</button><button id="passwordStart">打开账号登录</button><button id="challenge">打开人工验证窗口</button></div>
 <p>登录窗口在运行服务的电脑上打开。人机验证请在该窗口完成；验证码不会自动重发。</p>
 <div class="actions" id="managedControls"><button id="sendSms">发送短信验证码</button><label>短信验证码 <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label><button id="verifySms">提交验证码</button><button id="passwordSubmit">提交账号登录</button></div><button id="complete">验证并保存会话</button></section>
-<section><h2>采集任务</h2><p id="search"></p><label>本次查询（选填，每行一个查询；同一行按网站组合规则原样提交）<textarea id="queries" rows="2" placeholder="留空使用配置"></textarea></label><button id="run">立即采集</button><pre id="runs">—</pre></section>
+<section><h2>采集任务</h2><p id="search"></p><label>本次查询（选填，每行一个查询；所有查询合计最多 15 页，按顺序采集）<textarea id="queries" rows="2" placeholder="留空使用配置"></textarea></label><button id="run">立即采集</button><pre id="runs">—</pre></section>
 <section><h2>已保存项目</h2><div class="actions"><input id="keyword" placeholder="在已保存数据中搜索"><label><input id="valid" type="checkbox">只看可跟进项目</label><button id="loadProjects">查询</button><button id="previous">上一页</button><span id="pagination"></span><button id="next">下一页</button></div>
 <div class="table-wrap"><table><thead><tr><th>项目</th><th>地区</th><th>发布</th><th>预算（元）</th><th>报名/文件截止</th><th>投标/响应截止</th><th>信息完整性</th></tr></thead><tbody id="projects"></tbody></table></div>
 <dialog id="detail"><button id="closeDetail">关闭</button><pre id="detailText"></pre></dialog></section>

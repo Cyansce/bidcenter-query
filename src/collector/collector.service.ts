@@ -7,7 +7,7 @@ import { NotificationsService } from '../common/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { BidcenterClient } from '../bidcenter/client.service';
 import { SiteError } from '../bidcenter/protocol';
-import { dayWindow, normalizeSearch } from '../bidcenter/parser';
+import { dayWindow, normalizeSearch, DETAIL_PARSER_VERSION } from '../bidcenter/parser';
 import { ProjectsService } from '../projects/projects.service';
 
 @Injectable()
@@ -36,8 +36,9 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
     if (!unique.length) throw new BadRequestException('查询关键词不能为空');
     const { fromDate, toDate, chinaDay } = dayWindow(new Date(), config.lookbackDays);
     const scheduleKey = trigger === 'daily' ? `daily:${chinaDay}` : undefined;
-    if (scheduleKey) return this.db.collectionRun.upsert({ where: { scheduleKey }, create: { scheduleKey, trigger, queriesJson: JSON.stringify(unique), fromDate, toDate }, update: {} });
-    return this.db.collectionRun.create({ data: { trigger, queriesJson: JSON.stringify(unique), fromDate, toDate } });
+    const maxPages = Math.min(15, config.maxPages);
+    if (scheduleKey) return this.db.collectionRun.upsert({ where: { scheduleKey }, create: { scheduleKey, trigger, queriesJson: JSON.stringify(unique), fromDate, toDate, maxPages }, update: {} });
+    return this.db.collectionRun.create({ data: { trigger, queriesJson: JSON.stringify(unique), fromDate, toDate, maxPages } });
   }
   pump(): Promise<void> {
     if (this.stopping || this.active) return this.active || Promise.resolve();
@@ -69,10 +70,12 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
         const queries = JSON.parse(run.queriesJson) as string[];
         const warnings = new Set<string>(JSON.parse(run.warningsJson));
         let failedDetails = run.failedDetails;
+        let pagesCollected = run.pagesCollected;
+        const maxPages = Math.min(15, run.maxPages, config.maxPages);
         const workStarted = Date.now();
-        for (let index = run.queryIndex; index < queries.length; index++) {
+        for (let index = run.queryIndex; index < queries.length && pagesCollected < maxPages; index++) {
           let previousSignature = '';
-          for (let page = index === run.queryIndex ? run.page : 1; page <= config.maxPages; page++) {
+          for (let page = index === run.queryIndex ? run.page : 1; pagesCollected < maxPages; page++) {
             this.checkContinuation(workStarted);
             const results = await this.client.search(queries[index], page);
             const signature = results.items.map(x => x.news_id).join(',');
@@ -84,7 +87,8 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
               if (![1, 2].includes(summary.noticeType) || summary.publishedAt < run.fromDate || summary.publishedAt > run.toDate) continue;
               const project = await this.projects.saveListing(item, queries[index]);
               await this.db.collectionRun.update({ where: { id: run.id }, data: { seen: { increment: 1 } } });
-              if (project.detailFetchedAt && project.detailStatus === 'COMPLETE' && Date.now() - project.detailFetchedAt.getTime() < config.detailRefreshHours * 3600000) continue;
+              if (project.detailFetchedAt && project.detailStatus === 'COMPLETE' && project.accessLevel === 'FULL'
+                && project.detailParserVersion === DETAIL_PARSER_VERSION && Date.now() - project.detailFetchedAt.getTime() < config.detailRefreshHours * 3600000) continue;
               try {
                 const detail = await this.client.detail(summary.sourceId);
                 const saved = await this.projects.saveDetail(summary.sourceId, detail, summary);
@@ -93,23 +97,28 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
                 if (!(error instanceof SiteError) || ['LOGIN_REQUIRED', 'HUMAN_REQUIRED', 'TRANSIENT', 'PROTOCOL_CHANGED'].includes(error.kind)) throw error;
                 failedDetails++;
                 warnings.add('部分详情受账户权限限制；已保留列表信息');
-                await this.db.project.update({ where: { id: project.id }, data: { detailStatus: 'RESTRICTED', detailError: error.message } });
+                await this.db.$transaction([
+                  this.db.project.update({ where: { id: project.id }, data: { detailStatus: 'RESTRICTED', detailError: error.message } }),
+                  this.db.collectionRun.update({ where: { id: run.id }, data: { failedDetails, warningsJson: JSON.stringify([...warnings]) } }),
+                ]);
               }
             }
             const totalPages = Math.ceil(results.accessibleTotal / 40);
             const permittedPages = results.paid ? totalPages : Math.min(totalPages, 10);
             const finished = page >= Math.max(1, permittedPages) || results.items.length === 0;
-            if (finished || page === config.maxPages) {
+            pagesCollected++;
+            if (finished) {
               if (page < Math.ceil(results.total / 40)) warnings.add(`查询 ${queries[index]} 受分页上限或账户权限限制，仅完成 ${page} 页`);
               if (!results.items.length && page < totalPages) warnings.add(`查询 ${queries[index]} 提前返回空页，请复核网站结果`);
-              await this.db.collectionRun.update({ where: { id: run.id }, data: { queryIndex: index + 1, page: 1, failedDetails, warningsJson: JSON.stringify([...warnings]) } });
+              await this.db.collectionRun.update({ where: { id: run.id }, data: { queryIndex: index + 1, page: 1, pagesCollected, failedDetails, warningsJson: JSON.stringify([...warnings]) } });
               break;
             }
             // Page checkpoint only moves after every detail has either been saved or explicitly marked.
-            await this.db.collectionRun.update({ where: { id: run.id }, data: { queryIndex: index, page: page + 1, failedDetails, warningsJson: JSON.stringify([...warnings]) } });
+            await this.db.collectionRun.update({ where: { id: run.id }, data: { queryIndex: index, page: page + 1, pagesCollected, failedDetails, warningsJson: JSON.stringify([...warnings]) } });
           }
         }
         const latest = await this.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } });
+        if (pagesCollected >= maxPages && latest.queryIndex < queries.length) warnings.add(`已达到每个任务合计 ${maxPages} 页上限，其余页面和查询未采集`);
         if (latest.restricted > 0) warnings.add('部分正文或字段被网站遮盖，已按原样保存并标记 RESTRICTED');
         await this.db.collectionRun.update({ where: { id: run.id }, data: { status: warnings.size ? 'PARTIAL' : 'SUCCEEDED', warningsJson: JSON.stringify([...warnings]), finishedAt: new Date() } });
         if (warnings.size) await this.notifications.notify('COLLECTION_PARTIAL', `采集任务 ${run.id} 已完成可访问部分；请查看任务中的缺失原因`);

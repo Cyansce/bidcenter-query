@@ -11,7 +11,10 @@ export class ProjectsService {
   async saveListing(item: SearchItem, query: string) {
     const value = normalizeSearch(item, query);
     return this.db.$transaction(async tx => {
-      const project = await tx.project.upsert({ where: { sourceId: value.sourceId }, create: value, update: { lastSeenAt: new Date() } });
+      const project = await tx.project.upsert({ where: { sourceId: value.sourceId }, create: value, update: {
+        lastSeenAt: new Date(), listingDataJson: value.listingDataJson, originalUrl: value.originalUrl || undefined,
+        listedDeadlineRaw: value.listedDeadlineRaw, expectedPurchaseRaw: value.expectedPurchaseRaw,
+      } });
       await tx.queryMatch.upsert({ where: { projectId_query: { projectId: project.id, query } }, create: { projectId: project.id, query }, update: { lastSeenAt: new Date() } });
       return project;
     });
@@ -19,7 +22,11 @@ export class ProjectsService {
   async saveDetail(sourceId: string, detail: Record<string, any>, fallback: ReturnType<typeof normalizeSearch>) {
     const value = normalizeDetail(sourceId, detail, fallback);
     await this.db.$transaction(async tx => {
-      const project = await tx.project.update({ where: { sourceId }, data: value });
+      const previous = await tx.project.findUniqueOrThrow({ where: { sourceId } });
+      // A later restricted response must not destroy a previously saved full member copy.
+      const data = previous.accessLevel === 'FULL' && value.accessLevel !== 'FULL'
+        ? { detailStatus: 'RESTRICTED', detailError: '本次详情权限受限；保留此前已保存的完整会员内容' } : value;
+      const project = await tx.project.update({ where: { sourceId }, data });
       await tx.projectRevision.upsert({
         where: { projectId_hash: { projectId: project.id, hash: value.contentHash } },
         create: { projectId: project.id, hash: value.contentHash, snapshotJson: JSON.stringify(value) }, update: {},
@@ -46,7 +53,8 @@ export class ProjectsService {
     const [total, items] = await this.db.$transaction([
       this.db.project.count({ where }),
       this.db.project.findMany({ where, take: query.pageSize, skip: (query.page - 1) * query.pageSize,
-        orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }], omit: { bodyHtml: true, bodyText: true, contactsJson: true, contentHash: true, deadlineEvidence: true },
+        orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }], omit: { bodyHtml: true, bodyText: true, contactsJson: true, contentHash: true, deadlineEvidence: true,
+          attachmentsJson: true, timelineJson: true, tagsJson: true, listingDataJson: true, detailDataJson: true },
         include: { matches: { select: { query: true, lastSeenAt: true } } } }),
     ]);
     return { total, page: query.page, pageSize: query.pageSize, items: items.map(item => ({ ...item,
@@ -56,7 +64,9 @@ export class ProjectsService {
   async get(id: string) {
     const project = await this.db.project.findUnique({ where: { id }, include: { matches: true } });
     if (!project) throw new NotFoundException('项目不存在');
-    const { contactsJson, deadlineEvidence, ...rest } = project;
-    return { ...rest, followUpStatus: project.followUpStatus === 'CANCELLED' ? 'CANCELLED' : followUp(project.noticeType, project.fileDeadline, project.bidDeadline, ''), contacts: JSON.parse(contactsJson), deadlineEvidence: JSON.parse(deadlineEvidence) };
+    const { contactsJson, deadlineEvidence, attachmentsJson, timelineJson, tagsJson, listingDataJson, detailDataJson, ...rest } = project;
+    return { ...rest, followUpStatus: project.followUpStatus === 'CANCELLED' ? 'CANCELLED' : followUp(project.noticeType, project.fileDeadline, project.bidDeadline, ''),
+      contacts: JSON.parse(contactsJson), deadlineEvidence: JSON.parse(deadlineEvidence), attachments: JSON.parse(attachmentsJson),
+      timeline: JSON.parse(timelineJson), tags: JSON.parse(tagsJson), listingData: JSON.parse(listingDataJson), detailData: JSON.parse(detailDataJson) };
   }
 }
