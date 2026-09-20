@@ -115,3 +115,28 @@ test('恰好15页且无剩余查询可以完整成功，旧配置无法超过硬
   try { const run = await collector.enqueue('test', ['服务器']); await collector.pump(); const done = await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } }); assert.equal(done.status, 'SUCCEEDED'); assert.equal(done.pagesCollected, 15); assert.equal(run.maxPages, 15); assert.equal(pages.length, 15); }
   finally { config.maxPages = old; await collector.onModuleDestroy(); await f.cleanup(); }
 });
+
+test('详情限流保存原页断点与冷却时间，不标为权限失败，冷却后可恢复', async () => {
+  const f = await fixture(); let cooling = true; let calls = 0;
+  const retryAt = new Date(Date.now() + 3600000);
+  const client = { verifySession: async () => true, search: async () => { calls++; return { items: [item(1)], total: 1, accessibleTotal: 1, paid: true }; },
+    detail: async () => { if (cooling) throw new SiteError('COOLDOWN', '访问过于频繁', retryAt); return detail(1); } };
+  const collector = new CollectorService(f.db, client as any, { isBlocked: () => false, requireAction: async () => {} } as any, f.projects, { notify: async () => {} } as any);
+  try {
+    const run = await collector.enqueue('test', ['服务器']); await collector.pump();
+    const paused = await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(paused.status, 'WAITING_COOLDOWN'); assert.equal(paused.nextAttemptAt?.getTime(), retryAt.getTime());
+    assert.equal(paused.page, 1); assert.equal(paused.pagesCollected, 0); assert.equal(paused.failedDetails, 0); assert.equal(paused.attempts, 0);
+    await collector.pump(); assert.equal(calls, 1); await assert.rejects(collector.resume(run.id), /冷却/);
+    cooling = false; await f.db.collectionRun.update({ where: { id: run.id }, data: { nextAttemptAt: new Date(Date.now() - 1) } }); await collector.pump();
+    assert.equal((await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } })).status, 'SUCCEEDED');
+  } finally { await collector.onModuleDestroy(); await f.cleanup(); }
+});
+test('同一轮跨查询重复的受限详情不重复访问，保留两个查询匹配', async () => {
+  const f = await fixture(); let fetched = 0;
+  const client = { verifySession: async () => true, search: async () => ({ items: [item(1)], total: 1, accessibleTotal: 1, paid: true }),
+    detail: async () => { fetched++; return { ...detail(1), isAllow: false }; } };
+  const collector = new CollectorService(f.db, client as any, { isBlocked: () => false } as any, f.projects, { notify: async () => {} } as any);
+  try { await collector.enqueue('test', ['服务器', '昇腾']); await collector.pump(); assert.equal(fetched, 1); assert.equal(await f.db.queryMatch.count(), 2); }
+  finally { await collector.onModuleDestroy(); await f.cleanup(); }
+});

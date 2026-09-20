@@ -6,13 +6,14 @@ import { DbService } from './common/db.service';
 import { LoginStartDto, ProjectQueryDto, RunDto, SmsDto } from './common/dto';
 import { ProjectsService } from './projects/projects.service';
 import { config } from './config';
+import { BidcenterClient } from './bidcenter/client.service';
 
 @Controller('api')
 @UseGuards(ApiGuard)
 export class AppController {
-  constructor(private readonly auth: AuthService, private readonly collector: CollectorService, private readonly db: DbService, private readonly projects: ProjectsService) {}
+  constructor(private readonly auth: AuthService, private readonly collector: CollectorService, private readonly db: DbService, private readonly projects: ProjectsService, private readonly client: BidcenterClient) {}
   @Get('status') async status() {
-    return { auth: await this.auth.status(), schedule: { cron: '0 0 8 * * *', timeZone: 'Asia/Shanghai', enabled: config.scheduleEnabled },
+    return { auth: await this.auth.status(), pacing: await this.client.pacingStatus(), schedule: { cron: '0 0 8 * * *', timeZone: 'Asia/Shanghai', enabled: config.scheduleEnabled },
       search: { mode: config.searchMode, keywords: config.keywords, combinedQuery: config.combinedQuery, lookbackDays: config.lookbackDays, types: [1, 2], region: '全国', tag: config.searchTag, maxPagesPerRun: config.maxPages },
       count: await this.db.project.count() };
   }

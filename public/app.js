@@ -23,10 +23,12 @@ async function refresh() {
     $('managedControls').hidden = status.auth.browserMode === 'chrome-manual';
     $('auth').textContent = `${status.auth.state} · ${status.auth.account || status.auth.phone} · ${status.auth.message}`;
     $('search').textContent = `当前：${status.search.mode === 'combined' ? '组合查询 ' + status.search.combinedQuery : '分别查询 ' + status.search.keywords.join('、')}；每任务最多 ${status.search.maxPagesPerRun} 页；已保存 ${status.count} 条`;
+    const pacing = status.pacing;
+    $('pacing').textContent = `访问间隔 ${pacing.minIntervalMs / 1000}–${pacing.maxIntervalMs / 1000} 秒；每 ${pacing.batchSize} 次休息 ${pacing.breakMinMs / 1000}–${pacing.breakMaxMs / 1000} 秒。${pacing.pausedUntil ? '冷却至 ' + date(pacing.pausedUntil) + '。' : pacing.nextRequestAt ? '下次访问不早于 ' + date(pacing.nextRequestAt) + '。' : ''}${pacing.humanRequired ? '网站验证尚未解除，请人工验证后点击“验证并保存会话”。' : ''}`;
     $('runs').replaceChildren();
     for (const run of runs.slice(0, 12)) {
       const row = document.createElement('div');
-      row.textContent = `${date(run.createdAt)}  ${run.status}  已完成 ${run.pagesCollected} / ${run.maxPages} 页；查询 ${Math.min(run.queryIndex + 1, JSON.parse(run.queriesJson).length)} / 断点第 ${run.page} 页  保存详情 ${run.saved} / 受限 ${run.restricted}\n${run.lastError || ''} ${JSON.parse(run.warningsJson).join('；')}\n`;
+      row.textContent = `${date(run.createdAt)}  ${run.status}  已完成 ${run.pagesCollected} / ${run.maxPages} 页；查询 ${Math.min(run.queryIndex + 1, JSON.parse(run.queriesJson).length)} / 断点第 ${run.page} 页  保存详情 ${run.saved} / 受限 ${run.restricted}\n${run.lastError || ''} ${run.nextAttemptAt ? '计划恢复：' + date(run.nextAttemptAt) : ''} ${JSON.parse(run.warningsJson).join('；')}\n`;
       if (['FAILED', 'RETRY_WAIT'].includes(run.status)) { const button = document.createElement('button'); button.textContent = '从断点恢复'; button.onclick = () => action(() => api(`runs/${run.id}/resume`, {})); row.append(button); }
       $('runs').append(row);
     }

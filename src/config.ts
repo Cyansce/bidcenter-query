@@ -35,7 +35,13 @@ export const config = {
   lookbackDays: integer('LOOKBACK_DAYS', 7, 1, 7),
   // A run shares this budget across all queries. Legacy settings cannot lift the hard cap.
   maxPages: Math.min(15, integer('MAX_PAGES_PER_RUN', integer('MAX_PAGES_PER_QUERY', 15, 1, 1000), 1, 1000)),
-  requestInterval: integer('REQUEST_MIN_INTERVAL_MS', 3000, 1000, 60000),
+  requestInterval: integer('REQUEST_MIN_INTERVAL_MS', 10000, 1000, 120000),
+  requestMaxInterval: integer('REQUEST_MAX_INTERVAL_MS', 20000, 1000, 300000),
+  requestBatchSize: integer('REQUEST_BATCH_SIZE', 20, 1, 100),
+  requestBreakMin: integer('REQUEST_BREAK_MIN_MS', 90000, 1000, 3600000),
+  requestBreakMax: integer('REQUEST_BREAK_MAX_MS', 150000, 1000, 3600000),
+  rateLimitCooldown: integer('RATE_LIMIT_COOLDOWN_MS', 1800000, 60000, 86400000),
+  requestRetryBase: integer('REQUEST_RETRY_BASE_MS', 60000, 10000, 3600000),
   requestTimeout: integer('REQUEST_TIMEOUT_MS', 30000, 1000, 60000),
   detailRefreshHours: integer('DETAIL_REFRESH_HOURS', 24, 1, 168),
   scheduleEnabled: process.env.SCHEDULE_ENABLED !== 'false',
@@ -47,4 +53,6 @@ export function validateConfig() {
   if (Buffer.from(config.sessionKey, 'base64').length !== 32) throw new Error('SESSION_KEY 必须是 32 字节的 Base64 密钥');
   if (process.env.DATABASE_URL && !process.env.DATABASE_URL.startsWith('file:')) throw new Error('只支持 SQLite file: 数据库');
   if (!config.keywords.length) throw new Error('SEARCH_KEYWORDS 不能为空');
+  if (config.requestMaxInterval < config.requestInterval) throw new Error('REQUEST_MAX_INTERVAL_MS 不能小于 REQUEST_MIN_INTERVAL_MS');
+  if (config.requestBreakMax < config.requestBreakMin) throw new Error('REQUEST_BREAK_MAX_MS 不能小于 REQUEST_BREAK_MIN_MS');
 }

@@ -60,7 +60,7 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
     }, 20000);
     try {
       const run = await this.db.collectionRun.findFirst({
-        where: { status: { in: ['QUEUED', 'RUNNING', 'WAITING_LOGIN', 'WAITING_HUMAN', 'RETRY_WAIT'] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
+        where: { status: { in: ['QUEUED', 'RUNNING', 'WAITING_LOGIN', 'WAITING_HUMAN', 'WAITING_COOLDOWN', 'RETRY_WAIT'] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
         orderBy: { createdAt: 'asc' },
       });
       if (!run) return;
@@ -72,6 +72,7 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
         let failedDetails = run.failedDetails;
         let pagesCollected = run.pagesCollected;
         const maxPages = Math.min(15, run.maxPages, config.maxPages);
+        const fetchedThisRound = new Set<string>();
         const workStarted = Date.now();
         for (let index = run.queryIndex; index < queries.length && pagesCollected < maxPages; index++) {
           let previousSignature = '';
@@ -87,14 +88,17 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
               if (![1, 2].includes(summary.noticeType) || summary.publishedAt < run.fromDate || summary.publishedAt > run.toDate) continue;
               const project = await this.projects.saveListing(item, queries[index]);
               await this.db.collectionRun.update({ where: { id: run.id }, data: { seen: { increment: 1 } } });
+              if (fetchedThisRound.has(summary.sourceId)) continue;
               if (project.detailFetchedAt && project.detailStatus === 'COMPLETE' && project.accessLevel === 'FULL'
                 && project.detailParserVersion === DETAIL_PARSER_VERSION && Date.now() - project.detailFetchedAt.getTime() < config.detailRefreshHours * 3600000) continue;
               try {
                 const detail = await this.client.detail(summary.sourceId);
                 const saved = await this.projects.saveDetail(summary.sourceId, detail, summary);
+                fetchedThisRound.add(summary.sourceId);
                 await this.db.collectionRun.update({ where: { id: run.id }, data: { saved: { increment: 1 }, restricted: { increment: saved.accessLevel === 'RESTRICTED' ? 1 : 0 } } });
               } catch (error) {
-                if (!(error instanceof SiteError) || ['LOGIN_REQUIRED', 'HUMAN_REQUIRED', 'TRANSIENT', 'PROTOCOL_CHANGED'].includes(error.kind)) throw error;
+                if (!(error instanceof SiteError) || error.kind !== 'PERMISSION_REQUIRED') throw error;
+                fetchedThisRound.add(summary.sourceId);
                 failedDetails++;
                 warnings.add('部分详情受账户权限限制；已保留列表信息');
                 await this.db.$transaction([
@@ -125,11 +129,12 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
       } catch (error) {
         if (this.stopping || this.leaseLost) return; // Leave RUNNING checkpoint for the next lease holder.
         const siteError = error instanceof SiteError ? error : new SiteError('PROTOCOL_CHANGED', '采集出现内部错误，请检查服务日志及接口兼容性');
-        const attempts = run.attempts + 1;
+        const attempts = run.attempts + (siteError.kind === 'TRANSIENT' ? 1 : 0);
         const retry = siteError.kind === 'TRANSIENT' && attempts <= 5;
-        const status = siteError.kind === 'LOGIN_REQUIRED' ? 'WAITING_LOGIN' : siteError.kind === 'HUMAN_REQUIRED' ? 'WAITING_HUMAN' : retry ? 'RETRY_WAIT' : 'FAILED';
+        const status = siteError.kind === 'LOGIN_REQUIRED' ? 'WAITING_LOGIN' : siteError.kind === 'HUMAN_REQUIRED' ? 'WAITING_HUMAN' : siteError.kind === 'COOLDOWN' ? 'WAITING_COOLDOWN' : retry ? 'RETRY_WAIT' : 'FAILED';
+        const retryAt = retry ? new Date(Math.max(siteError.retryAt?.getTime() || 0, Date.now() + Math.min(60, 2 ** attempts) * 60000)) : siteError.retryAt || null;
         await this.db.collectionRun.update({ where: { id: run.id }, data: { status, attempts, lastError: siteError.message,
-          nextAttemptAt: retry ? new Date(Date.now() + Math.min(60, 2 ** attempts) * 60000) : null, finishedAt: status === 'FAILED' ? new Date() : null } });
+          nextAttemptAt: status === 'FAILED' ? null : retryAt, finishedAt: status === 'FAILED' ? new Date() : null } });
         await this.auth.requireAction(siteError);
         if (!['LOGIN_REQUIRED', 'HUMAN_REQUIRED'].includes(siteError.kind)) await this.notifications.notify(status, `任务 ${run.id}：${siteError.message}`);
         // Do not log upstream responses, URLs containing credentials, or session data.
@@ -149,6 +154,7 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
     const run = await this.db.collectionRun.findUnique({ where: { id } });
     if (!run) throw new BadRequestException('任务不存在');
     if (['SUCCEEDED', 'PARTIAL', 'RUNNING'].includes(run.status)) throw new BadRequestException('该状态不能恢复；可新建采集任务');
+    if (run.nextAttemptAt && run.nextAttemptAt > new Date()) throw new BadRequestException('任务正在冷却，请等待计划恢复时间；重复点击不会提前发起请求');
     return this.db.collectionRun.update({ where: { id }, data: { status: 'QUEUED', nextAttemptAt: null, finishedAt: null, attempts: 0 } });
   }
   async onModuleDestroy() { this.stopping = true; if (this.timer) clearInterval(this.timer); await this.active; }

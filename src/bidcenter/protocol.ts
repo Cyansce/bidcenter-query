@@ -1,8 +1,8 @@
 import { createDecipheriv } from 'node:crypto';
 
-export type FailureKind = 'LOGIN_REQUIRED' | 'HUMAN_REQUIRED' | 'PERMISSION_REQUIRED' | 'TRANSIENT' | 'PROTOCOL_CHANGED';
+export type FailureKind = 'LOGIN_REQUIRED' | 'HUMAN_REQUIRED' | 'COOLDOWN' | 'PERMISSION_REQUIRED' | 'TRANSIENT' | 'PROTOCOL_CHANGED';
 export class SiteError extends Error {
-  constructor(public readonly kind: FailureKind, message: string) { super(message); }
+  constructor(public readonly kind: FailureKind, message: string, public readonly retryAt?: Date) { super(message); }
 }
 export const siteTrue = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
 export const siteFalse = (value: unknown) => value === false || value === 0 || value === '0' || value === 'false';

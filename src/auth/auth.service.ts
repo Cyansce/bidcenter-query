@@ -153,14 +153,18 @@ export class AuthService implements OnApplicationShutdown {
         await this.sessions.replace(await this.browserContext.storageState(), userAgent);
       }
       try {
-        await this.client.verifySession();
+        await this.client.verifySession(true);
         this.state = 'AUTHENTICATED'; this.message = '已验证登录并加密保存会话，暂停任务将自动继续'; this.blocked = false;
         await this.manual.close();
         await this.browser?.close(); this.browser = undefined; this.browserContext = undefined; this.page = undefined;
         return this.status();
       } catch (error) {
         await this.sessions.resetFromDisk();
-        if (error instanceof SiteError) { await this.requireAction(error); throw new BadRequestException(error.message); }
+        if (error instanceof SiteError) {
+          await this.requireAction(error);
+          const resumeAt = error.retryAt?.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+          throw new BadRequestException(`${error.message}${resumeAt ? `；最早可重试：${resumeAt}（北京时间）` : ''}`);
+        }
         throw error;
       }
     });
