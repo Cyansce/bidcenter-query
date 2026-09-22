@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { DbService } from '../src/common/db.service';
 import { ProjectsService } from '../src/projects/projects.service';
 import { CollectorService } from '../src/collector/collector.service';
+import { AuthService } from '../src/auth/auth.service';
 import { normalizeSearch } from '../src/bidcenter/parser';
 import { SiteError } from '../src/bidcenter/protocol';
 import { ProjectQueryDto } from '../src/common/dto';
@@ -52,6 +53,37 @@ test('登录中断保留页断点，恢复时不重复详情，不漏剩余项�
     assert.equal(await f.db.project.count(), 2); assert.deepEqual(calls, ['1', '2', '2']);
     assert.equal(await f.db.projectRevision.count(), 2);
   } finally { await collector.onModuleDestroy(); await f.cleanup(); }
+});
+test('人工验证暂停任务，验证失败保持暂停，成功后自动从断点继续', async () => {
+  const f = await fixture(); let challenge = false; const calls: string[] = [];
+  const client = {
+    verifySession: async () => { if (challenge) throw new SiteError('HUMAN_REQUIRED', '请完成网站验证'); return true; },
+    search: async () => ({ items: [item(1), item(2)], total: 2, accessibleTotal: 2, paid: true }),
+    detail: async (id: string) => {
+      calls.push(id);
+      if (id === '2' && calls.length === 2) { challenge = true; throw new SiteError('HUMAN_REQUIRED', '请完成网站验证'); }
+      return detail(+id);
+    },
+  };
+  const notes = { notify: async () => {} };
+  const auth = new AuthService({ resetFromDisk: async () => {}, identity: async () => ({}) } as any, client as any, notes as any,
+    { isOpen: false, close: async () => {} } as any);
+  auth.openChallenge = async () => ({ state: 'HUMAN_REQUIRED' }) as any;
+  const collector = new CollectorService(f.db, client as any, auth, f.projects, notes as any);
+  try {
+    const run = await collector.enqueue('test', ['服务器']); await collector.pump();
+    const paused = await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(paused.status, 'WAITING_HUMAN'); assert.equal(paused.page, 1);
+    assert.equal(paused.nextAttemptAt, null); assert.equal(auth.isBlocked(), true);
+    await collector.pump(); assert.deepEqual(calls, ['1', '2']);
+    await assert.rejects(auth.complete(), /请完成网站验证/);
+    assert.equal(auth.isBlocked(), true); await collector.pump(); assert.equal(calls.length, 2);
+    challenge = false; await auth.complete(); assert.equal(auth.isBlocked(), false);
+    await collector.pump();
+    const done = await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(done.status, 'SUCCEEDED'); assert.equal(done.pagesCollected, 1);
+    assert.deepEqual(calls, ['1', '2', '2']); assert.equal(await f.db.project.count(), 2);
+  } finally { await collector.onModuleDestroy(); await auth.onApplicationShutdown(); await f.cleanup(); }
 });
 test('两个 worker 共享 SQLite 时只有一个采集，并自动排除范围外数据', async () => {
   const f = await fixture(); let detailCount = 0;
@@ -139,4 +171,59 @@ test('同一轮跨查询重复的受限详情不重复访问，保留两个查�
   const collector = new CollectorService(f.db, client as any, { isBlocked: () => false } as any, f.projects, { notify: async () => {} } as any);
   try { await collector.enqueue('test', ['服务器', '昇腾']); await collector.pump(); assert.equal(fetched, 1); assert.equal(await f.db.queryMatch.count(), 2); }
   finally { await collector.onModuleDestroy(); await f.cleanup(); }
+});
+
+test('排队任务可取消和删除，重启不再执行；删除保留项目和每日调度去重', async () => {
+  const f = await fixture(); let requests = 0;
+  const client = { verifySession: async () => { requests++; } };
+  const auth = { isBlocked: () => false };
+  const collector = new CollectorService(f.db, client as any, auth as any, f.projects, {} as any);
+  try {
+    const cancelled = await collector.enqueue('test', ['服务器']); await collector.cancel(cancelled.id);
+    assert.equal((await f.db.collectionRun.findUniqueOrThrow({ where: { id: cancelled.id } })).status, 'CANCELLED');
+    await assert.rejects(collector.resume(cancelled.id), /不能恢复/);
+    const deleted = await collector.enqueue('daily');
+    await f.projects.saveListing(item(1), '服务器');
+    await collector.remove(deleted.id);
+    assert.equal((await collector.enqueue('daily')).id, deleted.id);
+    assert.equal((await f.db.collectionRun.findUniqueOrThrow({ where: { id: deleted.id } })).status, 'DELETED');
+    await assert.rejects(collector.resume(deleted.id), /不存在/);
+    await collector.pump(); assert.equal(requests, 0);
+    const restarted = new CollectorService(f.db, client as any, auth as any, f.projects, {} as any);
+    try { await restarted.pump(); assert.equal(requests, 0); } finally { await restarted.onModuleDestroy(); }
+    assert.equal(await f.db.project.count(), 1);
+    await collector.remove(cancelled.id);
+  } finally { await collector.onModuleDestroy(); await f.cleanup(); }
+});
+test('任务在被选中后取消或删除，worker 不会将其重新改为 RUNNING', async () => {
+  for (const operation of ['cancel', 'remove'] as const) {
+    const f = await fixture(); let requests = 0;
+    let collector: CollectorService;
+    const delegate = new Proxy(f.db.collectionRun, { get(target, key) {
+      if (key === 'findFirst') return async (args: any) => {
+        const run = await target.findFirst(args);
+        if (run) await collector[operation](run.id);
+        return run;
+      };
+      return Reflect.get(target, key);
+    } });
+    const db = new Proxy(f.db, { get(target, key) { return key === 'collectionRun' ? delegate : Reflect.get(target, key); } });
+    collector = new CollectorService(db, { verifySession: async () => { requests++; } } as any, { isBlocked: () => false } as any, f.projects, {} as any);
+    try {
+      const run = await collector.enqueue('test', ['服务器']); await collector.pump();
+      assert.equal(requests, 0);
+      assert.equal((await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } })).status, operation === 'cancel' ? 'CANCELLED' : 'DELETED');
+    } finally { await collector.onModuleDestroy(); await f.cleanup(); }
+  }
+});
+test('已开始执行的任务拒绝取消和删除，不改动其状态', async () => {
+  const f = await fixture();
+  const collector = new CollectorService(f.db, {} as any, {} as any, f.projects, {} as any);
+  try {
+    const run = await collector.enqueue('test', ['服务器']);
+    await f.db.collectionRun.update({ where: { id: run.id }, data: { status: 'RUNNING' } });
+    await assert.rejects(collector.cancel(run.id), (error: any) => error.getStatus() === 409);
+    await assert.rejects(collector.remove(run.id), (error: any) => error.getStatus() === 409);
+    assert.equal((await f.db.collectionRun.findUniqueOrThrow({ where: { id: run.id } })).status, 'RUNNING');
+  } finally { await collector.onModuleDestroy(); await f.cleanup(); }
 });

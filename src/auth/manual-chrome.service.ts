@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, OnApplicationShutdown } from '@nestjs/
 import { spawn, ChildProcess } from 'node:child_process';
 import { access, mkdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { chromium, BrowserContext, Browser } from 'playwright';
 import { config } from '../config';
@@ -22,7 +23,12 @@ export class ManualChromeService implements OnApplicationShutdown {
     throw new BadRequestException('未找到普通 Chrome，请安装 Chrome 或配置 CHROME_EXECUTABLE；也可选择 Playwright 登录模式');
   }
   async open(url: string) {
-    if (this.isOpen) return;
+    if (this.isOpen) {
+      const context = await this.attach();
+      const page = context.pages()[0] || await context.newPage();
+      await page.bringToFront();
+      return;
+    }
     const executable = await this.executable();
     const port = config.chromeDebugPort;
     await new Promise<void>((resolve, reject) => {
@@ -39,11 +45,20 @@ export class ManualChromeService implements OnApplicationShutdown {
     });
     this.launched = true;
     this.child.once('exit', () => { this.launched = false; });
-    // No CDP connection, page automation, injected script, or synthetic click during manual login.
+    // Form entry and CAPTCHA interaction remain manual; the service observes the session via CDP.
   }
   async attach(): Promise<BrowserContext> {
     if (!this.isOpen) throw new BadRequestException('普通 Chrome 登录窗口已关闭，请重新打开登录');
-    this.browser ??= await chromium.connectOverCDP(`http://127.0.0.1:${config.chromeDebugPort}`, { timeout: config.requestTimeout });
+    // A freshly spawned Chrome may not have opened its local CDP port yet.
+    const deadline = Date.now() + Math.min(config.requestTimeout, 10000);
+    while (!this.browser?.isConnected()) {
+      try {
+        this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${config.chromeDebugPort}`, { timeout: Math.max(1, deadline - Date.now()) });
+      } catch {
+        if (!this.isOpen || Date.now() >= deadline) throw new BadRequestException('Chrome 登录窗口暂未就绪，请稍后重试');
+        await delay(200);
+      }
+    }
     const context = this.browser.contexts()[0];
     if (!context) throw new BadRequestException('Chrome 会话不可用');
     return context;

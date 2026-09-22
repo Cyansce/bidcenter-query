@@ -14,7 +14,6 @@ function choice<T extends string>(name: string, fallback: T, choices: readonly T
 export const config = {
   host: process.env.HOST || '127.0.0.1',
   port: integer('PORT', 3100, 1, 65535),
-  apiKey: process.env.API_KEY || '',
   databaseUrl: `file:${resolve((process.env.DATABASE_URL || 'file:./data/bidcenter.db').replace(/^file:/, ''))}`,
   dataDir: resolve(process.env.DATA_DIR || 'data'),
   sessionKey: process.env.SESSION_KEY || '',
@@ -35,11 +34,12 @@ export const config = {
   lookbackDays: integer('LOOKBACK_DAYS', 7, 1, 7),
   // A run shares this budget across all queries. Legacy settings cannot lift the hard cap.
   maxPages: Math.min(15, integer('MAX_PAGES_PER_RUN', integer('MAX_PAGES_PER_QUERY', 15, 1, 1000), 1, 1000)),
-  requestInterval: integer('REQUEST_MIN_INTERVAL_MS', 10000, 1000, 120000),
-  requestMaxInterval: integer('REQUEST_MAX_INTERVAL_MS', 20000, 1000, 300000),
-  requestBatchSize: integer('REQUEST_BATCH_SIZE', 20, 1, 100),
-  requestBreakMin: integer('REQUEST_BREAK_MIN_MS', 90000, 1000, 3600000),
-  requestBreakMax: integer('REQUEST_BREAK_MAX_MS', 150000, 1000, 3600000),
+  requestInterval: integer('REQUEST_MIN_INTERVAL_MS', 1500, 0, 120000),
+  requestMaxInterval: integer('REQUEST_MAX_INTERVAL_MS', 3000, 0, 300000),
+  // Zero disables the optional batch break; requests still share one serial queue.
+  requestBatchSize: integer('REQUEST_BATCH_SIZE', 0, 0, 100),
+  requestBreakMin: integer('REQUEST_BREAK_MIN_MS', 0, 0, 3600000),
+  requestBreakMax: integer('REQUEST_BREAK_MAX_MS', 0, 0, 3600000),
   rateLimitCooldown: integer('RATE_LIMIT_COOLDOWN_MS', 1800000, 60000, 86400000),
   requestRetryBase: integer('REQUEST_RETRY_BASE_MS', 60000, 10000, 3600000),
   requestTimeout: integer('REQUEST_TIMEOUT_MS', 30000, 1000, 60000),
@@ -49,7 +49,6 @@ export const config = {
   webhookUrl: process.env.NOTIFICATION_WEBHOOK_URL || '',
 };
 export function validateConfig() {
-  if (config.apiKey.length < 24) throw new Error('请先 npm run setup；API_KEY 至少 24 字符');
   if (Buffer.from(config.sessionKey, 'base64').length !== 32) throw new Error('SESSION_KEY 必须是 32 字节的 Base64 密钥');
   if (process.env.DATABASE_URL && !process.env.DATABASE_URL.startsWith('file:')) throw new Error('只支持 SQLite file: 数据库');
   if (!config.keywords.length) throw new Error('SEARCH_KEYWORDS 不能为空');

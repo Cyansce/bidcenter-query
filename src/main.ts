@@ -23,6 +23,6 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.enableShutdownHooks();
   await app.listen(config.port, config.host);
-  console.log(`管理页 http://${config.host}:${config.port}；API_KEY 位于 .env，日志不输出密钥`);
+  console.log(`管理页 http://${config.host}:${config.port}；打开页面即可自动连接`);
 }
 bootstrap().catch(() => { console.error('服务启动失败，请检查配置、数据库迁移及浏览器依赖'); process.exitCode = 1; });

@@ -74,7 +74,7 @@ export class RequestPacer {
     }
     this.state.requests++;
     this.gap = this.random(this.options.minInterval, this.options.maxInterval);
-    if (this.state.requests % this.options.batchSize === 0) this.gap += this.random(this.options.breakMin, this.options.breakMax);
+    if (this.options.batchSize > 0 && this.state.requests % this.options.batchSize === 0) this.gap += this.random(this.options.breakMin, this.options.breakMax);
     // Reserve before dispatch so a crash during a request cannot cause a restart burst.
     this.state.nextRequestAt = this.clock.now() + this.gap;
     await this.save();
@@ -89,11 +89,14 @@ export class RequestPacer {
     if (!['TRANSIENT', 'COOLDOWN', 'HUMAN_REQUIRED'].includes(error.kind)) return error;
     this.state.failures++;
     const transientWait = Math.min(1800000, this.options.retryBase * 2 ** Math.min(10, this.state.failures - 1));
-    const wait = Math.max(serverDelay, error.kind === 'TRANSIENT' ? transientWait : this.options.cooldown);
-    this.state.pausedUntil = Math.max(this.state.pausedUntil, this.clock.now() + wait);
+    // A challenge needs human action, not an extra local 30-minute timer.
+    // Explicit server delays and any existing cooldown still apply to manual verification.
+    const localWait = error.kind === 'TRANSIENT' ? transientWait : error.kind === 'COOLDOWN' ? this.options.cooldown : 0;
+    const wait = Math.max(serverDelay, localWait);
+    if (wait > 0) this.state.pausedUntil = Math.max(this.state.pausedUntil, this.clock.now() + wait);
     if (error.kind === 'HUMAN_REQUIRED') this.state.humanRequired = true;
     await this.save();
-    return new SiteError(error.kind, error.message, new Date(this.state.pausedUntil));
+    return new SiteError(error.kind, error.message, this.state.pausedUntil > this.clock.now() ? new Date(this.state.pausedUntil) : undefined, error.challengeUrl);
   }
   async confirmHumanVerification() { this.state.humanRequired = false; await this.save(); }
   async status() {

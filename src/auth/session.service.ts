@@ -6,13 +6,27 @@ import { request, APIRequestContext, BrowserContext } from 'playwright';
 import { config } from '../config';
 import { SiteError } from '../bidcenter/protocol';
 
-type State = Awaited<ReturnType<BrowserContext['storageState']>> & { userAgent?: string };
+export type State = Awaited<ReturnType<BrowserContext['storageState']>> & { userAgent?: string };
 export function accountIdentity(state: Pick<State, 'cookies'>) {
   const cookie = state.cookies.find(c => c.name === 'aspcn' && /(^|\.)bidcenter\.com\.cn$/.test(c.domain) && (c.expires < 0 || c.expires * 1000 > Date.now()));
   let value = cookie?.value || '';
   if (!value.includes('&') && /%26/i.test(value)) value = decodeURIComponent(value);
   const parts = new URLSearchParams(value);
   return { name: parts.get('name') || '', company: parts.get('company') || '', membership: parts.get('vip') || '' };
+}
+export function sessionCredentials(state: Pick<State, 'cookies'>) {
+  const valid = state.cookies.filter(c => (c.expires < 0 || c.expires * 1000 > Date.now()) && /(^|\.)bidcenter\.com\.cn$/.test(c.domain));
+  const cookie = valid.find(c => c.name === 'aspcn');
+  if (!cookie) throw new SiteError('LOGIN_REQUIRED', '尚未登录采招网，请在登录窗口完成登录');
+  if (config.expectedAccount && accountIdentity(state).name !== config.expectedAccount) {
+    throw new SiteError('LOGIN_REQUIRED', '当前会话不是指定的会员账号，请使用配置的会员账号重新登录');
+  }
+  let value = cookie.value;
+  if (!value.includes('&') && /%26/i.test(value)) value = decodeURIComponent(value);
+  const parts = new URLSearchParams(value);
+  const token = parts.get('Token') || parts.get('token');
+  if (!token) throw new SiteError('LOGIN_REQUIRED', '会话缺少 Token，请重新登录');
+  return { token, guid: valid.find(c => c.name === 'bidguid')?.value || String(Date.now()) };
 }
 export function seal(state: unknown, key: Buffer): Buffer {
   const iv = randomBytes(12);
@@ -65,19 +79,7 @@ export class SessionService implements OnApplicationShutdown {
   async resetFromDisk() { await this.api?.dispose(); this.api = undefined; this.userAgent = undefined; }
   async credentials(context?: APIRequestContext) {
     const state = await (context || await this.context()).storageState();
-    if (config.expectedAccount && accountIdentity(state).name !== config.expectedAccount) {
-      throw new SiteError('LOGIN_REQUIRED', '当前会话不是指定的会员账号，请使用配置的会员账号重新登录');
-    }
-    const valid = state.cookies.filter(c => (c.expires < 0 || c.expires * 1000 > Date.now()) && /(^|\.)bidcenter\.com\.cn$/.test(c.domain));
-    const cookie = valid.find(c => c.name === 'aspcn');
-    if (!cookie) throw new SiteError('LOGIN_REQUIRED', '尚未登录采招网，请打开管理页登录');
-    let value = cookie.value;
-    // ASP.NET compound cookies normally use & separators; decode whole only if separators are encoded.
-    if (!value.includes('&') && /%26/i.test(value)) value = decodeURIComponent(value);
-    const parts = new URLSearchParams(value);
-    const token = parts.get('Token') || parts.get('token');
-    if (!token) throw new SiteError('LOGIN_REQUIRED', '会话缺少 Token，请重新登录');
-    return { token, guid: valid.find(c => c.name === 'bidguid')?.value || String(Date.now()) };
+    return sessionCredentials(state);
   }
   async exists() { try { await this.credentials(); return true; } catch (e) { if (e instanceof SiteError) return false; throw e; } }
   async identity() {

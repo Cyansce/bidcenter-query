@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
@@ -9,6 +9,9 @@ import { BidcenterClient } from '../bidcenter/client.service';
 import { SiteError } from '../bidcenter/protocol';
 import { dayWindow, normalizeSearch, DETAIL_PARSER_VERSION } from '../bidcenter/parser';
 import { ProjectsService } from '../projects/projects.service';
+
+const cancellableStatuses = ['QUEUED', 'WAITING_LOGIN', 'WAITING_HUMAN', 'WAITING_COOLDOWN', 'RETRY_WAIT'];
+const deletableStatuses = [...cancellableStatuses, 'CANCELLED', 'FAILED', 'SUCCEEDED', 'PARTIAL'];
 
 @Injectable()
 export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -64,7 +67,10 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
         orderBy: { createdAt: 'asc' },
       });
       if (!run) return;
-      await this.db.collectionRun.update({ where: { id: run.id }, data: { status: 'RUNNING', startedAt: run.startedAt || new Date(), nextAttemptAt: null, lastError: null } });
+      // Claim only the version we selected: cancellation/deletion may win the race.
+      const claimed = await this.db.collectionRun.updateMany({ where: { id: run.id, status: run.status, updatedAt: run.updatedAt },
+        data: { status: 'RUNNING', startedAt: run.startedAt || new Date(), nextAttemptAt: null, lastError: null } });
+      if (!claimed.count) return;
       try {
         await this.client.verifySession();
         const queries = JSON.parse(run.queriesJson) as string[];
@@ -147,15 +153,35 @@ export class CollectorService implements OnApplicationBootstrap, OnModuleDestroy
   }
   private checkContinuation(started: number) {
     if (this.stopping || this.leaseLost) throw new SiteError('TRANSIENT', '任务已停止，保留断点');
-    if (this.auth.isBlocked()) throw new SiteError('HUMAN_REQUIRED', '登录操作进行中，采集已暂停');
+    if (this.auth.isBlocked()) throw new SiteError('LOGIN_REQUIRED', '正在同步浏览器登录状态，采集暂时暂停；登录后自动继续');
     if (Date.now() - started > 6 * 3600000) throw new SiteError('TRANSIENT', '单轮任务超过六小时，稍后从断点继续');
   }
   async resume(id: string) {
     const run = await this.db.collectionRun.findUnique({ where: { id } });
-    if (!run) throw new BadRequestException('任务不存在');
-    if (['SUCCEEDED', 'PARTIAL', 'RUNNING'].includes(run.status)) throw new BadRequestException('该状态不能恢复；可新建采集任务');
+    if (!run || run.status === 'DELETED') throw new NotFoundException('任务不存在');
+    if (!['FAILED', ...cancellableStatuses].includes(run.status)) throw new BadRequestException('该状态不能恢复；可新建采集任务');
     if (run.nextAttemptAt && run.nextAttemptAt > new Date()) throw new BadRequestException('任务正在冷却，请等待计划恢复时间；重复点击不会提前发起请求');
-    return this.db.collectionRun.update({ where: { id }, data: { status: 'QUEUED', nextAttemptAt: null, finishedAt: null, attempts: 0 } });
+    const changed = await this.db.collectionRun.updateMany({ where: { id, status: run.status, updatedAt: run.updatedAt },
+      data: { status: 'QUEUED', nextAttemptAt: null, finishedAt: null, attempts: 0 } });
+    if (!changed.count) throw new ConflictException('任务状态已变化，请刷新后重试');
+    return this.db.collectionRun.findUniqueOrThrow({ where: { id } });
+  }
+  async cancel(id: string) {
+    await this.transitionInactive(id, cancellableStatuses, 'CANCELLED');
+    return { message: '任务已取消，不会继续执行；已采集的项目保留' };
+  }
+  async remove(id: string) {
+    // Retain the scheduleKey tombstone so today's deleted daily run is not recreated on restart.
+    await this.transitionInactive(id, deletableStatuses, 'DELETED');
+    return { message: '任务已从列表删除，已采集的项目保留' };
+  }
+  private async transitionInactive(id: string, allowed: string[], status: string) {
+    const changed = await this.db.collectionRun.updateMany({ where: { id, status: { in: allowed } },
+      data: { status, nextAttemptAt: null, finishedAt: new Date(), lastError: null } });
+    if (changed.count) return;
+    const run = await this.db.collectionRun.findUnique({ where: { id } });
+    if (!run || run.status === 'DELETED') throw new NotFoundException('任务不存在');
+    throw new ConflictException(run.status === 'RUNNING' ? '任务已开始执行，不能取消或删除；请等待本轮结束' : '任务状态已变化，请刷新后重试');
   }
   async onModuleDestroy() { this.stopping = true; if (this.timer) clearInterval(this.timer); await this.active; }
 }

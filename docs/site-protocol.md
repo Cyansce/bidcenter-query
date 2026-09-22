@@ -58,7 +58,7 @@
 
 真实测试中 Playwright 登录窗口出现安全验证失败，页面错误字符串 `KqVFSkD21V`，没有明确说明成因。[阿里云官方 FAQ](https://help.aliyun.com/zh/captcha/captcha2-0/user-guide/captcha-2-0-client-access-faq) 指出模拟点击可能被识别并拦截；仅凭该页面不能确认具体触发规则。
 
-因此默认增加普通 Chrome 人工登录：用专用配置目录启动系统 Chrome，用户自行完成表单/验证码，点击管理页“验证并保存会话”后才连接本地 CDP 并导出本站 session。没有修改验证码、注入指纹伪装脚本或移除验证弹层。自动表单方式保留为可配置选项。
+因此默认增加普通 Chrome 人工登录：用专用配置目录启动系统 Chrome，用户自行完成表单/验证码。2026-09-22 起改为通过本地 CDP 自动观察页面和本站会话，识别到登录成功后校验并加密保存，无需用户额外确认。没有修改验证码、注入指纹伪装脚本或移除验证弹层。自动表单方式保留为可配置选项。
 
 真实登录后确认：浏览器存储的某些 Cookie 含 Node 请求头不接受的字符；APIRequestContext 默认携带这些 Cookie 时请求在本地失败。原站跨域请求通过表单 Token 认证，未启用跨域 Cookie，因此采集器显式发送空 Cookie 头，并保留 Token 校验。修正后 AuthorityHandler 返回 HTTP 200、ret=true。
 

@@ -1,9 +1,9 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { join } from 'node:path';
 import { APIResponse } from 'playwright';
-import { SessionService } from '../auth/session.service';
+import { SessionService, State } from '../auth/session.service';
 import { config } from '../config';
-import { decodePayload, unwrapPayload, parseSearch, searchForm, interfaceHeaders, SiteError, siteFalse } from './protocol';
+import { challengePageUrl, decodePayload, unwrapPayload, parseSearch, searchForm, interfaceHeaders, SiteError, siteFalse } from './protocol';
 import { RequestPacer, retryAfterMs } from './request-pacer';
 
 @Injectable()
@@ -13,7 +13,7 @@ export class BidcenterClient implements OnModuleDestroy {
     minInterval: config.requestInterval, maxInterval: config.requestMaxInterval, batchSize: config.requestBatchSize,
     breakMin: config.requestBreakMin, breakMax: config.requestBreakMax, cooldown: config.rateLimitCooldown, retryBase: config.requestRetryBase });
   constructor(private readonly sessions: SessionService) {}
-  private async post(path: string, parameters: Record<string, string | number>, search = false, verify = false, manualVerification = false) {
+  private async post(path: string, parameters: Record<string, string | number>, search = false, verify = false, manualVerification = false, candidate?: { state: State; userAgent?: string }) {
     // List, detail, login checks and concurrent callers all share the same queue and pacing.
     const before = this.chain;
     let release!: () => void;
@@ -24,6 +24,9 @@ export class BidcenterClient implements OnModuleDestroy {
       let response: APIResponse | undefined;
       let serverDelay = 0;
       try {
+        // Swapping the browser session shares the request queue, so an in-flight request
+        // can finish before its API context is disposed. Failed candidates never overwrite disk.
+        if (candidate) await this.sessions.replace(candidate.state, candidate.userAgent);
         const api = await this.sessions.context();
         const credentials = await this.sessions.credentials(api);
         const form = { from: search ? '6137' : '4037', location: search ? '6138' : '7928', ...parameters, ...credentials };
@@ -38,7 +41,7 @@ export class BidcenterClient implements OnModuleDestroy {
         if (status === 403 || (status >= 300 && status < 400)) {
           const location = response.headers().location || '';
           if (/sso\.bidcenter\.com\.cn.*(?:login|validate)/i.test(location)) throw new SiteError('LOGIN_REQUIRED', '采招网要求重新登录');
-          throw new SiteError('HUMAN_REQUIRED', '采招网拦截了请求，请在浏览器完成验证');
+          throw new SiteError('HUMAN_REQUIRED', '采招网拦截了请求，请在浏览器完成验证', undefined, challengePageUrl(location));
         }
         if (status === 429) throw new SiteError('COOLDOWN', '采招网限制访问频率，已暂停全部采集，冷却后从断点继续');
         if (status >= 500) throw new SiteError('TRANSIENT', '采招网服务暂时不可用，已暂停并延后重试');
@@ -52,6 +55,7 @@ export class BidcenterClient implements OnModuleDestroy {
         if (manualVerification) await this.pacer.confirmHumanVerification();
         return data;
       } catch (error) {
+        if (candidate) await this.sessions.resetFromDisk();
         if (error instanceof SiteError) throw await this.pacer.failed(error, serverDelay);
         throw error;
       } finally {
@@ -70,6 +74,9 @@ export class BidcenterClient implements OnModuleDestroy {
   async verifySession(manualVerification = false) {
     await this.post('/public/AuthorityHandler.ashx', {}, false, true, manualVerification);
     return true;
+  }
+  async verifyBrowserSession(state: State, userAgent?: string) {
+    await this.post('/public/AuthorityHandler.ashx', {}, false, true, true, { state, userAgent });
   }
   pacingStatus() { return this.pacer.status(); }
   onModuleDestroy() { this.pacer.stop(); }

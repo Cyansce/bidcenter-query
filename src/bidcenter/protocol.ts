@@ -2,7 +2,15 @@ import { createDecipheriv } from 'node:crypto';
 
 export type FailureKind = 'LOGIN_REQUIRED' | 'HUMAN_REQUIRED' | 'COOLDOWN' | 'PERMISSION_REQUIRED' | 'TRANSIENT' | 'PROTOCOL_CHANGED';
 export class SiteError extends Error {
-  constructor(public readonly kind: FailureKind, message: string, public readonly retryAt?: Date) { super(message); }
+  constructor(public readonly kind: FailureKind, message: string, public readonly retryAt?: Date, public readonly challengeUrl?: string) { super(message); }
+}
+export function challengePageUrl(location: string) {
+  if (!location) return undefined;
+  try {
+    const url = new URL(location, 'https://interface.bidcenter.com.cn');
+    if (url.protocol === 'https:' && !url.username && !url.password && /(^|\.)bidcenter\.com\.cn$/.test(url.hostname)) return url.href;
+  } catch {}
+  return undefined;
 }
 export const siteTrue = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
 export const siteFalse = (value: unknown) => value === false || value === 0 || value === '0' || value === 'false';

@@ -1,5 +1,4 @@
-import { Body, Controller, Get, HttpCode, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiGuard } from './common/api.guard';
+import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { AuthService } from './auth/auth.service';
 import { CollectorService } from './collector/collector.service';
 import { DbService } from './common/db.service';
@@ -9,7 +8,6 @@ import { config } from './config';
 import { BidcenterClient } from './bidcenter/client.service';
 
 @Controller('api')
-@UseGuards(ApiGuard)
 export class AppController {
   constructor(private readonly auth: AuthService, private readonly collector: CollectorService, private readonly db: DbService, private readonly projects: ProjectsService, private readonly client: BidcenterClient) {}
   @Get('status') async status() {
@@ -30,13 +28,15 @@ export class AppController {
     return this.db.projectRevision.findMany({ where: { projectId: id }, orderBy: { capturedAt: 'desc' }, take: 50, omit: { snapshotJson: true } });
   }
   @Post('runs') @HttpCode(202) run(@Body() dto: RunDto) { return this.collector.enqueue('manual', dto.queries); }
-  @Get('runs') runs() { return this.db.collectionRun.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }); }
+  @Get('runs') runs() { return this.db.collectionRun.findMany({ where: { status: { not: 'DELETED' } }, orderBy: { createdAt: 'desc' }, take: 50 }); }
   @Get('runs/:id') async getRun(@Param('id') id: string) {
     const run = await this.db.collectionRun.findUnique({ where: { id } });
-    if (!run) throw new NotFoundException('任务不存在');
+    if (!run || run.status === 'DELETED') throw new NotFoundException('任务不存在');
     return run;
   }
   @Post('runs/:id/resume') @HttpCode(202) resume(@Param('id') id: string) { return this.collector.resume(id); }
+  @Post('runs/:id/cancel') cancel(@Param('id') id: string) { return this.collector.cancel(id); }
+  @Delete('runs/:id') remove(@Param('id') id: string) { return this.collector.remove(id); }
   @Get('notifications') notifications() { return this.db.notification.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }); }
   @Post('notifications/:id/ack') acknowledge(@Param('id') id: string) {
     return this.db.notification.updateMany({ where: { id }, data: { acknowledgedAt: new Date() } });
